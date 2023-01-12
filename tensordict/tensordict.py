@@ -550,6 +550,24 @@ class TensorDictBase(Mapping, metaclass=abc.ABCMeta):
         """
         raise NotImplementedError(f"{self.__class__.__name__}")
 
+    def pop(
+        self, key: NESTED_KEY, default: Union[str, COMPATIBLE_TYPES] = "_no_default_"
+    ) -> COMPATIBLE_TYPES:
+        _nested_key_type_check(key)
+        try:
+            # using try/except for get/del is suboptimal, but
+            # this is faster that checkink if key in self keys
+            out = self.get(key, default)
+            self.del_(key)
+        except KeyError:
+            # if default provided, 'out' value will return, else raise error
+            if default == "_no_default_":
+                raise KeyError(
+                    f"You are trying to pop key `{key}` which is not in dict"
+                    f"without providing default value."
+                )
+        return out
+
     def _get_meta(self, key: NESTED_KEY) -> MetaTensor:
         _nested_key_type_check(key)
         try:
@@ -2692,23 +2710,6 @@ class TensorDict(TensorDictBase):
             # the regular get()
             return self._default_get(key, default)
 
-    def pop(
-        self, key: NESTED_KEY, default: Union[str, COMPATIBLE_TYPES] = "_no_default_"
-    ) -> COMPATIBLE_TYPES:
-        _nested_key_type_check(key)
-
-        if key in self.keys(include_nested=True):
-            if isinstance(key, tuple):
-                td, subkey = _get_leaf_tensordict(self, key)
-                out = td[subkey]
-                td.del_(subkey)
-            else:
-                out = self._tensordict[key]
-                self.del_(key)
-            return out
-        else:
-            return self._default_get(key, default)
-
     def share_memory_(self, lock=True) -> TensorDictBase:
         if self.is_memmap():
             raise RuntimeError(
@@ -3622,17 +3623,6 @@ torch.Size([3, 2])
     ) -> COMPATIBLE_TYPES:
         return self._source.get_at(key, self.idx, default=default)
 
-    def pop(
-        self,
-        key: NESTED_KEY,
-        default: Optional[Union[Tensor, str]] = "_no_default_",
-    ) -> COMPATIBLE_TYPES:
-        _nested_key_type_check(key)
-
-        out = self.get(key, default)
-        self.del_(key)
-        return out
-
     def set_at_(
         self,
         key: NESTED_KEY,
@@ -4182,23 +4172,6 @@ class LazyStackedTensorDict(TensorDictBase):
             )
         return torch.stack(tensors, self.stack_dim)
 
-    def pop(
-        self,
-        key: NESTED_KEY,
-        default: Optional[Union[Tensor, str]] = "_no_default_",
-    ) -> COMPATIBLE_TYPES:
-        # TODO: the codes below works for nested keys, but since nested keys
-        # aren't supported in get() and keys(), we'll simply return default instead.
-        _nested_key_type_check(key)
-
-        out = self.get(key, default)
-        if key in self._valid_keys:
-            for td in self.tensordicts:
-                td.del_(key)
-            self._valid_keys.remove(key)
-
-        return out
-
     def _make_meta(self, key: str) -> MetaTensor:
         return torch.stack(
             [td._get_meta(key) for td in self.tensordicts], self.stack_dim
@@ -4722,17 +4695,6 @@ class SavedTensorDict(TensorDictBase):
     ) -> COMPATIBLE_TYPES:
         td = self._load()
         return td.get(key, default=default)
-
-    def pop(
-        self,
-        key: NESTED_KEY,
-        default: Optional[Union[Tensor, str]] = "_no_default_",
-    ) -> COMPATIBLE_TYPES:
-        _nested_key_type_check(key)
-
-        out = self.get(key, default)
-        self.del_(key)
-        return out
 
     def set(
         self, key: NESTED_KEY, value: Union[dict, COMPATIBLE_TYPES], **kwargs
